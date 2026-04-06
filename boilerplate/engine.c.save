@@ -515,12 +515,13 @@ void handle_shutdown(int sig)
 }
 
 static int child_fn(void *arg) {
-    
+
     container_args_t *args = (container_args_t *)arg;
-    
+    char *rootfs = args->rootfs;
     dup2(args->pipefd[1], STDOUT_FILENO);
     dup2(args->pipefd[1], STDERR_FILENO);
-        
+    write(STDOUT_FILENO, "Child writing to pipe\n", 23);
+    
     close(args->pipefd[0]);
     close(args->pipefd[1]);
     printf("Inside container (namespaces)\n");
@@ -533,10 +534,10 @@ static int child_fn(void *arg) {
 //        perror("bind mount failed");
 //    }
 
-   if (chroot(args->rootfs) != 0) {
-     perror("chroot failed");
-        return 1;
-    }
+  //  if (chroot(rootfs) != 0) {
+//    perror("chroot failed");
+//        return 1;
+//    }
 
     chdir("/");
 
@@ -545,13 +546,13 @@ static int child_fn(void *arg) {
     if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
         perror("mount /proc failed");
     }
-    //fsync(STDOUT_FILENO);
-    execl("/memory_hog", "/memory_hog", NULL);
+    fsync(STDOUT_FILENO);
+    execl("/bin/ls", "/bin/ls",  NULL);
 
     perror("execl failed");
     exit(1);
-  //  free(args);
-   // return 1;
+    free(args);
+    return 1;
 }
 
 void *pipe_reader_thread(void *arg)
@@ -587,104 +588,92 @@ void *pipe_reader_thread(void *arg)
     return NULL;
 }
 
-static pid_t start_container(supervisor_ctx_t *ctx,
-                             const char *id,
-                             const char *rootfs,
-		 size_t soft_limit_bytes, size_t  hard_limit_bytes)
+static pid_t start_container(supervisor_ctx_t *ctx, const char *id, const char *rootfs,
+unsigned long soft_limit_bytes,
+unsigned long hard_limit_bytes)
 {
-    char *stack = malloc(STACK_SIZE);
-    if (!stack) {
-        perror("malloc");
-        return -1;
-    }
+	char *stack = malloc(STACK_SIZE);
+	if (!stack) {
+   	   perror("malloc");
+    	   return -1;
+	}
 
-    char *stack_top = stack + STACK_SIZE;
+	char *stack_top = stack + STACK_SIZE;
 
-    int flags =  CLONE_NEWUTS | CLONE_NEWNS | SIGCHLD;
+	int flags = CLONE_NEWPID | CLONE_NEWUTS | CLONE_NEWNS | SIGCHLD;
 
-    container_args_t *args = malloc(sizeof(container_args_t));
-    if (!args) {
-        perror("malloc");
-        return -1;
-    }
+	container_args_t *args = malloc(sizeof(container_args_t));
+	if (!args) {
+    	   perror("malloc");
+    	   return -1;
+	}
+	
+	strncpy(args->rootfs, rootfs , PATH_MAX - 1);
+	args->rootfs[PATH_MAX - 1] = '\0';
+	int pipefd[2];
+	if (pipe(pipefd) == -1) {
+   	       perror("pipe");
+         	  return -1;
+	}
+        args->pipefd[0] = pipefd[0];
+        args->pipefd[1] = pipefd[1];
+	pid_t pid = clone(child_fn , stack_top, flags, (void *)args);
 
-    strncpy(args->rootfs, rootfs, PATH_MAX - 1);
-    args->rootfs[PATH_MAX - 1] = '\0';
+	if (pid == -1) {
+   	   perror("clone");
+   	   return -1;
+	}
+	// Parent process
+	close(pipefd[1]);  // close write end
+	// Create thread to read logs
+	pthread_t reader_thread;
+	reader_args_t *rargs = malloc(sizeof(reader_args_t));
+	rargs->fd = pipefd[0];
+	// create logs directory just in case		mkdir("logs", 0755);
+	// set log file path using container id
+	snprintf(rargs->log_path, PATH_MAX, "logs/%s.log", id);
+	pthread_create(&reader_thread, NULL, pipe_reader_thread, rargs);
+	printf("Started container %s with PID %d\n", id, pid);    
+	
 
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        perror("pipe");
-        return -1;
-    }
+	container_record_t *rec = malloc(sizeof(container_record_t));
+    	if (!rec) {
+           perror("malloc");
+           return -1;
+    	}
+        memset(rec, 0, sizeof(*rec));
 
-    args->pipefd[0] = pipefd[0];
-    args->pipefd[1] = pipefd[1];
+        strncpy(rec->id, id, sizeof(rec->id) - 1);
+        rec->host_pid = pid;
+        rec->started_at = time(NULL);
+        rec->state = CONTAINER_RUNNING;
+        rec->soft_limit_bytes = soft_limit_bytes;
+        rec->hard_limit_bytes = hard_limit_bytes;
+	int fd = open("/dev/container_monitor", O_RDWR);
+	if (fd < 0) {
+	    perror("open monitor device");
+	} else {
+	    struct monitor_request req;
 
-    pid_t pid = clone(child_fn, stack_top, flags, (void *)args);
+	    req.pid = pid;
+	    req.soft_limit_bytes = rec->soft_limit_bytes;
+	    req.hard_limit_bytes = rec->hard_limit_bytes;
 
-    if (pid == -1) {
-        perror("clone");
-        return -1;
-    }
+	    strncpy(req.container_id, id, MONITOR_NAME_LEN - 1);
+	    req.container_id[MONITOR_NAME_LEN - 1] = '\0';
 
-    // Parent process
-    close(pipefd[1]);
-    //int actual_pid;
-    //read(pipefd[0], &actual_pid, sizeof(actual_pid));
-    pthread_t reader_thread;
-    reader_args_t *rargs = malloc(sizeof(reader_args_t));
-    rargs->fd = pipefd[0];
+	    if (ioctl(fd, MONITOR_REGISTER, &req) < 0) {
+	        perror("ioctl REGISTER");
+	    }
 
-    mkdir("logs", 0755);
-    snprintf(rargs->log_path, PATH_MAX, "logs/%s.log", id);
+	    close(fd);
+	}
+        snprintf(rec->log_path, sizeof(rec->log_path), "logs/%s.log", rec->id);
 
-    pthread_create(&reader_thread, NULL, pipe_reader_thread, rargs);
-
-    printf("Started container %s with PID %d\n", id, pid);
-
-    // Create container record
-    // ✅ Register with kernel monitor
-    int fd = open("/dev/container_monitor", O_RDWR);
-    if (fd < 0) {
-        perror("open monitor device");
-    } else {
-        struct monitor_request req;
-
-        req.pid = pid;
-        req.soft_limit_bytes = soft_limit_bytes;
-        req.hard_limit_bytes = hard_limit_bytes;
-
-        strncpy(req.container_id, id, MONITOR_NAME_LEN - 1);
-        req.container_id[MONITOR_NAME_LEN - 1] = '\0';
-
-        if (ioctl(fd, MONITOR_REGISTER, &req) < 0) {
-            perror("ioctl REGISTER");
-        }
-
-        close(fd);
-    }
-     // Metadata
-    container_record_t *rec = malloc(sizeof(container_record_t));
-    if (!rec) {
-        perror("malloc");
-        return -1;
-    }
-
-    memset(rec, 0, sizeof(*rec));
-
-    strncpy(rec->id, id, sizeof(rec->id) - 1);
-    rec->host_pid = pid;
-    rec->started_at = time(NULL);
-    rec->state = CONTAINER_RUNNING;
-    rec->soft_limit_bytes = soft_limit_bytes;
-    rec->hard_limit_bytes = hard_limit_bytes;
-
-    snprintf(rec->log_path, sizeof(rec->log_path), "logs/%s.log", rec->id);
-
-    pthread_mutex_lock(&ctx->metadata_lock);
-    rec->next = ctx->containers;
-    ctx->containers = rec;
-    pthread_mutex_unlock(&ctx->metadata_lock);
+        pthread_mutex_lock(&ctx->metadata_lock);
+        rec->next = ctx->containers;
+        ctx->containers = rec;
+        pthread_mutex_unlock(&ctx->metadata_lock);
 
     return pid;
 }
@@ -738,8 +727,7 @@ static int run_supervisor(const char *rootfs)
 
             	    if (req.kind == CMD_START) {
                     	  printf("Starting container %s\n", req.container_id);
-                    	  start_container(&ctx, req.container_id, req.rootfs,
-				 req.soft_limit_bytes, req.hard_limit_bytes);
+                    	  start_container(&ctx, req.container_id, req.rootfs);
                     }
 
             	    else if (req.kind == CMD_PS) {
@@ -778,8 +766,7 @@ static int run_supervisor(const char *rootfs)
 		    else if (req.kind == CMD_RUN) {
 
     			printf("Running container %s in foreground\n", req.container_id);
-    			pid_t pid = start_container(&ctx, req.container_id,
- req.rootfs, req.soft_limit_bytes, req.hard_limit_bytes);
+    			pid_t pid = start_container(&ctx, req.container_id, req.rootfs);
 
     			if (pid > 0) {
                        	     int status;
