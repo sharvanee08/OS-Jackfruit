@@ -202,15 +202,28 @@ The supervisor acts as:
 
 ---
 
-## Design Decisions & Tradeoffs
+## **Design Decisions & Tradeoffs**
 
-| Component           | Design Choice             | Tradeoff                                     |
-| ------------------- | ------------------------- | -------------------------------------------- |
-| Container Isolation | Namespace-based           | Simpler but less secure than full containers |
-| Supervisor          | Single controller process | Easy management but single point of failure  |
-| Logging             | File-based logs           | Simple but not highly scalable               |
-| Kernel Monitor      | LKM-based tracking        | Powerful but increases system complexity     |
-| Scheduling Tests    | Synthetic workloads       | Limited realism but clear behavior           |
+**Container Isolation**  
+Design Choice: Namespace-based  
+Tradeoff: Simpler implementation, but less secure than full containers  
+
+**Supervisor**  
+Design Choice: Single controller process  
+Tradeoff: Easier to manage, but introduces a single point of failure  
+
+**Logging**  
+Design Choice: File-based logs  
+Tradeoff: Simple to implement, but not highly scalable  
+
+**Kernel Monitor**  
+Design Choice: LKM-based tracking  
+Tradeoff: Powerful monitoring, but increases system complexity  
+
+**Scheduling Tests**  
+Design Choice: Synthetic workloads  
+Tradeoff: Easier to control and analyze, but less realistic behavior  
+
 
 ---
 
