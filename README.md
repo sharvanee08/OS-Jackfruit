@@ -11,7 +11,7 @@
 
 ## Overview
 
-This project implements a lightweight Linux container runtime in C, featuring:
+This project implements a lightweight Linux container runtime in C. It features: 
 
 * Multi-container execution using namespaces
 * A long-running supervisor process
