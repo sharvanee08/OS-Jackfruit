@@ -239,7 +239,7 @@ Tradeoff: Easier to control and analyze, but less realistic behavior
 * `nice -n 0` process gets higher CPU share
 * `nice -n 10` process gets reduced CPU time
 
-👉 This demonstrates Linux’s fair scheduling and priority-based adjustments.
+This demonstrates Linux’s fair scheduling and priority-based adjustments.
 
 ---
 
