@@ -577,7 +577,7 @@ void *pipe_reader_thread(void *arg)
     }
 
     fwrite(buffer, 1, n, f);
-        fflush(f);  // 🔥 important
+        fflush(f);  
     }
 
     fclose(f);
@@ -643,7 +643,7 @@ static pid_t start_container(supervisor_ctx_t *ctx,
     printf("Started container %s with PID %d\n", id, pid);
 
     // Create container record
-    // ✅ Register with kernel monitor
+    // Register with kernel monitor
     int fd = open("/dev/container_monitor", O_RDWR);
     if (fd < 0) {
         perror("open monitor device");
