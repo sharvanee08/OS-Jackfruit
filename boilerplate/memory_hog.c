@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
             printf("malloc failed after %d allocations\n", count);
             fflush(stdout);
 
-            // 🔥 KEEP PROCESS ALIVE AFTER FAILURE
+            // KEEP PROCESS ALIVE AFTER FAILURE
             while (1) {
                 sleep(1);
             }
